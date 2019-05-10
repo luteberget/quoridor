@@ -1,0 +1,8 @@
+[package]
+name = "bot"
+version = "0.1.0"
+authors = ["Bjørnar Luteberget <luteberget@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+model = { path = "../model" }
