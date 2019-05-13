@@ -1,3 +1,5 @@
+use serde::{Serialize, Deserialize};
+
 
 pub trait Player {
     /// A player receives a move (or None if the player should perform the first move)
@@ -8,18 +10,21 @@ pub trait Player {
 
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug, Hash)]
+#[derive(Serialize, Deserialize)]
 pub enum Orientation {
     Horizontal, Vertical
 }
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug, Hash)]
+#[derive(Serialize, Deserialize)]
 pub struct Position {
     pub x: i64,
     pub y: i64
 }
 
-use std::hash::Hash;
+// use std::hash::Hash;
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
+#[derive(Serialize, Deserialize)]
 pub struct Board {
     pub player :usize,
     pub positions :[Position;2],

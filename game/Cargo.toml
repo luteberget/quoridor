@@ -6,3 +6,7 @@ edition = "2018"
 
 [dependencies]
 model = { path = "../model" }
+ws = "*"
+webbrowser = "*"
+serde_json = "*"
+structopt = "*"
