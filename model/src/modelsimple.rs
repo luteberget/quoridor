@@ -1,20 +1,30 @@
 
+pub trait Player {
+    /// A player receives a move (or None if the player should perform the first move)
+    /// and must respond with a move.
+    fn mv(&mut self, mv :Option<Move>) -> Move;
+    fn reset(&mut self);
+}
 
-#[derive(PartialEq, Eq, Copy, Clone)]
+
+#[derive(PartialEq, Eq, Copy, Clone, Debug, Hash)]
 pub enum Orientation {
     Horizontal, Vertical
 }
 
-#[derive(PartialEq, Eq, Copy, Clone)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug, Hash)]
 pub struct Position {
-    x: i64,
-    y: i64
+    pub x: i64,
+    pub y: i64
 }
 
+use std::hash::Hash;
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct Board {
-    player :usize,
-    positions :[Position;2],
-    walls :Vec<(Orientation,Position)>
+    pub player :usize,
+    pub positions :[Position;2],
+    pub walls_left :[usize;2],
+    pub walls :Vec<(Orientation,Position)>
         // a wall is an orientation and a coordinate.
         // for horizontal walls:
         // _a_b_
@@ -41,6 +51,7 @@ impl Default for Board {
         // Starting positions for players; no walls.
         Board {
             player: 0,
+            walls_left: [10,10],
             positions: [
                 Position { x: 5, y: 9 },
                 Position { x: 5, y: 1 },
@@ -50,6 +61,7 @@ impl Default for Board {
     }
 }
 
+#[derive(Copy,Clone,Debug, PartialEq, Eq)]
 pub enum Move {
     PawnTo(Position),
     WallAt(Orientation,Position),
@@ -74,18 +86,24 @@ impl Board {
     }
 
     pub fn is_valid_move(&self, pos :&Position) -> bool {
-        if !in_bounds(pos) { return false; }
+        if !in_bounds1to9(pos) { return false; }
         if is_neighbor(&self.positions[self.player], pos) {
             if !self.is_empty(pos) { return false; }
             if self.wall_between(&self.positions[self.player], pos) { return false; }
             true
         } else {
-            self.is_valid_jump(pos)
+            self.is_valid_jump(*pos)
         }
     }
 
     pub fn is_empty(&self, pos :&Position) -> bool {
         self.positions[0] != *pos && self.positions[1] != *pos
+    }
+
+    pub fn get_winner(&self) -> Option<usize> {
+        if self.positions[0].y == 1 { return Some(0); }
+        if self.positions[1].y == 9 { return Some(1); }
+        None
     }
 
     /// Checks whether two points, which are 4-connected neighbors,
@@ -120,8 +138,13 @@ impl Board {
     }
 
     pub fn can_add_wall(&self, ori :Orientation, pos :Position) -> bool {
+        // TODO improve efficiency by storing bit sets for checking conflicts
+        if !in_bounds1to8(&pos) { return false; }
+
         for (o,p) in &self.walls {
-            if wall_conflicts(&ori,&pos,o,p) {
+            let x=  wall_conflicts(&ori,&pos,o,p) ;
+            //println!("wall conflicts? {:?}", x);
+            if x {
                 return false;
             }
         }
@@ -133,9 +156,9 @@ impl Board {
         true
     }
 
-    pub fn is_valid_jump(&self, pos :&Position) -> bool {
+    pub fn is_valid_jump(&self, pos :Position) -> bool {
         let start = self.positions[self.player];
-        let end   = *pos;
+        let end = pos;
 
         let horizontal_jump = (end.x - start.x).abs() == 2 && end.y == start.y;
         let vertical_jump   = (end.y - start.y).abs() == 2 && end.x == start.x;
@@ -151,9 +174,12 @@ impl Board {
                !self.wall_between(&middle_pos,&end)
 
         } else if diagonal_jump {
+
+            // Opposite side of the other player from the current player.
             let other_side = Position { x: other_player_pos.x + (other_player_pos.x - start.x),
                                         y: other_player_pos.y + (other_player_pos.y - start.y)};
-            self.wall_between(&other_player_pos, &other_side) && 
+
+            self.wall_between(&other_player_pos, &other_side) &&  // Back wall must be there
                 !self.wall_between(&start, &other_player_pos) && 
                 !self.wall_between(&other_player_pos, &end)
 
@@ -162,18 +188,22 @@ impl Board {
         }
     }
 
-    pub fn goal_reachable(&self, ori :Orientation, pos :Position) -> bool {
+    pub fn get_wall_bitsets(&self) -> (u64,u64) {
         let mut horizontal_walls = 0u64;
         let mut vertical_walls = 0u64;
 
-        bitset_add_wall(&mut horizontal_walls, &mut vertical_walls, &ori, &pos);
         for (ori,pos) in &self.walls {
             bitset_add_wall(&mut horizontal_walls, &mut vertical_walls, &ori, &pos);
         }
+        (horizontal_walls,vertical_walls)
+    }
+
+    pub fn goal_reachable(&self, ori :Orientation, pos :Position) -> bool {
+        let (mut horizontal_walls,mut vertical_walls) = self.get_wall_bitsets();
+        bitset_add_wall(&mut horizontal_walls, &mut vertical_walls, &ori, &pos);
 
         // TODO store bit set directly in Board instead of converting 
         // vector of walls (not needed information when game is progressing forward).
-
 
         // player 1 must be able to reach top
         // and player 2 must be able to reach bootom
@@ -200,10 +230,15 @@ fn bitset_add_wall(horizontal_walls :&mut u64, vertical_walls :&mut u64,
     }
 }
 
-fn encode9(x :i64, y :i64) -> usize {
+pub fn encode9(x :i64, y :i64) -> usize {
     (x+9*y) as usize
 }
-fn encode8(x :i64, y :i64) -> usize {
+
+pub fn decode9(p :usize) -> Position {
+    Position { x: (p%9usize) as i64, y: (p/9usize) as i64 }
+}
+
+pub fn encode8(x :i64, y :i64) -> usize {
     (x+8*y) as usize
 }
 
@@ -269,27 +304,31 @@ pub fn goal_reachable(horizontal_walls: u64,
 }
 
 fn wall_conflicts(oa :&Orientation, pa :&Position, ob :&Orientation, pb :&Position) -> bool {
+    //println!("CHeck wall conflict {:?} {:?}", (oa,pa), (ob,pb));
     if oa == ob {
         match oa {
             Orientation::Horizontal => {
-                !(pa.y == pb.y && (pa.x == pb.x || pa.x + 1 == pb.x || pb.x + 1 == pa.x))
+                pa.y == pb.y && (pa.x == pb.x || pa.x + 1 == pb.x || pb.x + 1 == pa.x)
             },
             Orientation::Vertical => {
-                !(pa.x == pb.x && (pa.y == pb.y || pa.y + 1 == pb.y || pb.y + 1 == pa.y))
+                pa.x == pb.x && (pa.y == pb.y || pa.y + 1 == pb.y || pb.y + 1 == pa.y)
             },
         }
     } else {
         if let Orientation::Vertical = oa {
             // A is vertical, B is horizontal
-            !(pa == pb)
+            pa == pb
         } else {
             wall_conflicts(ob,pb,oa,pa)
         }
     }
 }
 
-fn in_bounds(pos :&Position) -> bool {
+pub fn in_bounds1to9(pos :&Position) -> bool {
     pos.x > 0 && pos.x <= 9 && pos.y > 0 && pos.y <= 9
+}
+pub fn in_bounds1to8(pos :&Position) -> bool {
+    pos.x > 0 && pos.x <= 8 && pos.y > 0 && pos.y <= 8
 }
 
 fn is_neighbor(a :&Position, b :&Position) -> bool {
@@ -302,4 +341,134 @@ fn is_neighbor(a :&Position, b :&Position) -> bool {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn board() {
+        let mut board :Board = Default::default();
+        assert!(board.integrate(
+                Move::WallAt(Orientation::Horizontal, 
+                             Position { x: -1, y: -1 })).is_err());
+
+        assert_eq!(0, board.player); // first player first
+
+        assert!(board.integrate(
+                Move::WallAt(Orientation::Horizontal, 
+                             Position { x: 1, y: 1 })).is_ok());
+
+        assert_eq!(1, board.player); // second player
+
+        // Cannot place wall there
+        assert!(board.integrate(
+                Move::WallAt(Orientation::Horizontal, 
+                             Position { x: 1, y: 1 })).is_err());
+
+        assert_eq!(1, board.player); // second player
+
+        // Cannot place wall there
+        assert!(board.integrate(
+                Move::WallAt(Orientation::Vertical, 
+                             Position { x: 1, y: 1 })).is_err());
+
+        assert_eq!(1, board.player); // second player
+        
+        // Cannot place wall there
+        assert!(board.integrate(
+                Move::WallAt(Orientation::Horizontal, 
+                             Position { x: 2, y: 1 })).is_err());
+
+        assert_eq!(1, board.player); // second player
+        //
+        // CAN place wall there
+        assert!(board.integrate(
+                Move::WallAt(Orientation::Horizontal, 
+                             Position { x: 8, y: 1 })).is_ok());
+
+        assert_eq!(0, board.player); // first player again
+        // Cannot place wall there
+        assert!(board.integrate(
+                Move::WallAt(Orientation::Horizontal, 
+                             Position { x: 7, y: 1 })).is_err());
+
+        assert_eq!(0, board.player); // second player
+    }
+
+    #[test]
+    fn test_blocking() {
+        let mut board :Board = Default::default();
+        assert!(board.integrate(
+                Move::WallAt(Orientation::Horizontal, 
+                             Position { x: 1, y: 5 })).is_ok());
+        assert!(board.integrate(
+                Move::WallAt(Orientation::Horizontal, 
+                             Position { x: 3, y: 5 })).is_ok());
+        assert!(board.integrate(
+                Move::WallAt(Orientation::Horizontal, 
+                             Position { x: 5, y: 5 })).is_ok());
+        assert!(board.integrate(
+                Move::WallAt(Orientation::Horizontal, 
+                             Position { x: 7, y: 5 })).is_ok());
+        assert!(board.integrate(
+                Move::WallAt(Orientation::Vertical, 
+                             Position { x: 7, y: 6 })).is_ok());
+        assert_eq!(1, board.player); // second player
+        //println!("walls {:?}", board.walls);
+        //
+        // BOTH players should now become blocked, so the move should not go through.
+        assert!(board.integrate(
+                Move::WallAt(Orientation::Horizontal, 
+                             Position { x: 8, y: 6 })).is_err());
+        assert_eq!(1, board.player); // second player
+    }
+
+    #[test]
+    fn move_and_jump() {
+        let mut board: Board = Default::default();
+
+        // cannot jump now
+        assert!(board.integrate(
+                Move::PawnTo(Position { x: 5, y: 9 })).is_err());
+        assert!(board.integrate(
+                Move::PawnTo(Position { x: 5, y: 7 })).is_err());
+        assert!(board.integrate(
+                Move::PawnTo(Position { x: 5, y: 8 })).is_ok());
+
+
+        let mut board: Board = Default::default();
+        board.positions[0] = Position {x: 5, y: 6};
+        board.positions[1] = Position {x: 5, y: 5};
+
+        // now we can jump over
+        assert!(board.integrate(
+                Move::PawnTo(Position { x: 5, y: 4 })).is_ok());
+
+        let mut board: Board = Default::default();
+        board.positions[0] = Position {x: 5, y: 6};
+        board.positions[1] = Position {x: 5, y: 5};
+
+        assert!(board.integrate(
+                Move::WallAt(Orientation::Horizontal, Position { x: 5, y: 6 })).is_ok());
+        assert_eq!(1, board.player); // second player
+
+        // now we can jump diagonally
+        assert!(board.integrate(
+                Move::PawnTo(Position { x: 4, y: 6 })).is_ok());
+
+
+        let mut board: Board = Default::default();
+        board.positions[0] = Position {x: 5, y: 6};
+        board.positions[1] = Position {x: 5, y: 5};
+
+        assert!(board.integrate(
+                Move::WallAt(Orientation::Horizontal, Position { x: 5, y: 6 })).is_ok());
+        assert_eq!(1, board.player); // second player
+
+        // now we can jump diagonally #2
+        assert!(board.integrate(
+                Move::PawnTo(Position { x: 6, y: 6 })).is_ok());
+    }
+
+}
 
