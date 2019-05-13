@@ -10,11 +10,27 @@ pub trait Player {
     fn mv(&mut self, mv :Option<Move>) -> Move;
 }
 
+// When placing a horizontal wall:
+//   param x in [1,8]
+//   param y in [1,8]
+//   mark below the left side of the wall as (x,y) 
+//
+// When placing a vertical wall:
+//   ...
+//   mark left of the top of the wall as (x,y)
+//
+// In total 2x u64
+//
+
 pub struct Board {
+  pub horizontal_walls: u64,
+  pub vertical_walls: u64,
   pub p1: Pos,
+  pub p1_walls: u8,
   pub p2: Pos,
-  pub walls: Vec<Wall>,
-}
+  pub p2_walls: u8,
+  // whose TURN?
+} // 64 + 64 + 16 + 16 bits
 
 impl Default for Board {
     fn default() -> Board {
