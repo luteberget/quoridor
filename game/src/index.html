@@ -126,6 +126,32 @@ socket.onmessage = function (event) {
 		.duration(300);
 
       data = JSON.parse(event.data);
+
+	if(data.message) {
+		svg.selectAll(".servermsg").remove();
+	var servermsg = svg.selectAll(".servermsg").data([data.message]);
+		var msg_elems = servermsg.enter().append("text");
+            msg_elems.merge(servermsg).attr("class", "servermsg")
+            .style("text-anchor", "left")
+            .style("opacity", textopacity)
+		.attr("fill","#f60")
+		.style("font-weight","bolder")
+	.attr("transform", function(d,i) { return "translate(" + gridSize*10 + "," + ((1.5+0.5*3.5)*gridSize) + ")"; })
+            .style("font-size", gridSize/2 + "px")
+	.merge(servermsg)
+	   .text(function(d,i) { 
+		   return d;
+	   });
+	servermsg.exit().remove();
+
+		setTimeout(function () {
+			console.log("ASBD");
+			msg_elems.transition().duration(500).style("opacity",0.0);
+		}, 1000);
+
+		return;
+	}
+
 	var send_move = data.send_move;
 	var board = data.board;
 	var players = svg.selectAll(".player").data(board.positions);

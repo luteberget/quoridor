@@ -9,6 +9,7 @@ static D3_JS :&'static [u8] = include_bytes!("d3/d3.js");
 
 struct ServerThread { 
     current_board: Arc<Mutex<Board>>,
+    out: ws::Sender,
     player1_channel: Option<mpsc::Sender<Move>>,
     player2_channel: Option<mpsc::Sender<Move>>,
 }
@@ -21,14 +22,26 @@ impl ws::Handler for ServerThread {
                 let current_board = self.current_board.lock().unwrap();
                 if current_board.player == 0 {
                     if let Some(ch) = &self.player1_channel {
-                        ch.send(mv).unwrap();
+                        if current_board.is_valid_move(&mv) {
+                            ch.send(mv).unwrap();
+                        } else {
+                            self.out.send(serde_json::to_string_pretty(&serde_json::json!({
+                                "message": "Invalid move",
+                            })).unwrap()).unwrap();
+                        }
                     } else {
                         eprintln!("Not expecting this player to move.");
                     }
                 }
                 if current_board.player == 1 {
                     if let Some(ch) = &self.player2_channel {
-                        ch.send(mv).unwrap();
+                        if current_board.is_valid_move(&mv) {
+                            ch.send(mv).unwrap();
+                        } else {
+                            self.out.send(serde_json::to_string_pretty(&serde_json::json!({
+                                "message": "Invalid move",
+                            })).unwrap()).unwrap();
+                        }
                     } else {
                         eprintln!("Not expecting this player to move.");
                     }
@@ -111,6 +124,7 @@ fn main() {
                 current_board: current_board_ws.clone(),
                 player1_channel: p1_ch_tx.clone(),
                 player2_channel: p2_ch_tx.clone(),
+                out: out,
             }
         }).unwrap();
 

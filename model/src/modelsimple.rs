@@ -77,7 +77,7 @@ impl Board {
     pub fn integrate(&mut self, mv :Move) -> Result<(),()> {
         match mv {
             Move::PawnTo(pos) => {
-                if !self.is_valid_move(&pos) { return Err(()); }
+                if !self.is_valid_pawn_move(&pos) { return Err(()); }
                 self.positions[self.player] = pos;
             },
             Move::WallAt(ori,pos) => {
@@ -91,7 +91,14 @@ impl Board {
         Ok(())
     }
 
-    pub fn is_valid_move(&self, pos :&Position) -> bool {
+    pub fn is_valid_move(&self, mv :&Move) -> bool {
+        match mv {
+            Move::PawnTo(pos) => self.is_valid_pawn_move(pos),
+            Move::WallAt(ori,pos) => self.can_add_wall(*ori,*pos),
+        }
+    }
+
+    pub fn is_valid_pawn_move(&self, pos :&Position) -> bool {
         if !in_bounds1to9(pos) { return false; }
         if is_neighbor(&self.positions[self.player], pos) {
             eprintln!("{:?} IS NEIGHBOR OF {:?}", &self.positions[self.player], pos);
@@ -218,10 +225,10 @@ impl Board {
         // and player 2 must be able to reach bootom
         let p1 = goal_reachable(horizontal_walls,
                        vertical_walls,
-                       self.positions[0], 1);
+                       self.positions[0], 9);
         let p2 = goal_reachable(horizontal_walls,
                        vertical_walls,
-                       self.positions[1], 9);
+                       self.positions[1], 1);
         p1 && p2
     }
 }
@@ -438,11 +445,11 @@ mod tests {
 
         // cannot jump now
         assert!(board.integrate(
-                Move::PawnTo(Position { x: 5, y: 9 })).is_err());
+                Move::PawnTo(Position { x: 5, y: 1 })).is_err());
         assert!(board.integrate(
-                Move::PawnTo(Position { x: 5, y: 7 })).is_err());
+                Move::PawnTo(Position { x: 5, y: 3 })).is_err());
         assert!(board.integrate(
-                Move::PawnTo(Position { x: 5, y: 8 })).is_ok());
+                Move::PawnTo(Position { x: 5, y: 2 })).is_ok());
 
 
         let mut board: Board = Default::default();
