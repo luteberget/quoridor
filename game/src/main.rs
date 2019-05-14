@@ -65,41 +65,30 @@ impl ws::Handler for ServerThread {
     }
 }
 
-
-
-// the 'game' exe starts
-// - two players
-// - and optionally a websocket server which sends new moves to visualization
-
-
-// pub trait PipedTimeoutPlayer {
-//     pub fn new() -> {
-//         // start a process
-//     }
-// 
-// }
-// 
-// impl Player for PipedTimeoutPlayer {
-//     fn mv(&mut self, mv: Option<Move>) -> Move {
-//         // Send to stdout
-//         // Wait for response with timeout
-//         // ...
-//         unimplemented!()
-//     }
-// 
-//     fn reset(&mut self) {}
-// }
-
-
 fn main() {
+    use std::env;
     eprintln!("Quoridor");
+    
+    struct Opts {
+        show_gui :bool, //verbose: bool,
+        p1: Box<Player>,
+        p2: Box<Player>,
+    }
 
-    //let launch_ws = true;
+    let mut opts = Opts { show_gui: false, 
+        //verbose: bool,
+        p1: Box::new(CLIPlayer{name: "p1"}),
+        p2: Box::new(CLIPlayer{name: "p2"}) };
 
+    let mut args = env::args();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-g" => { opts.show_gui = true; },
+            _ => panic!("arg err"),
+        }
+    }
 
     let current_board : Arc<Mutex<Board>> = Arc::new(Mutex::new(Default::default()));
-    //let mut log_move :Box<FnMut(Move,&Board)> = Box::new(|_,_| {});
-
     let ws_player1 = true;
     let ws_player2 = true;
 
