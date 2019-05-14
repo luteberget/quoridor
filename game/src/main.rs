@@ -1,12 +1,47 @@
 use model::*;
 
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::{thread,time};
+
 static INDEX_HTML :&'static [u8] = include_bytes!("index.html");
 static D3_JS :&'static [u8] = include_bytes!("d3/d3.js");
 
-struct ServerThread { }
+struct ServerThread { 
+    current_board: Arc<Mutex<Board>>,
+    player1_channel: Option<mpsc::Sender<Move>>,
+    player2_channel: Option<mpsc::Sender<Move>>,
+}
 
 impl ws::Handler for ServerThread {
-    fn on_message(&mut self, _msg :ws::Message) -> ws::Result<()> { Ok(()) }
+    fn on_message(&mut self, msg :ws::Message) -> ws::Result<()> { 
+        eprintln!("MESSAGE from web client {:?}", msg);
+        if let ws::Message::Text(txt) = msg {
+            if let Ok(mv) = parse(&txt) {
+                let current_board = self.current_board.lock().unwrap();
+                if current_board.player == 0 {
+                    if let Some(ch) = &self.player1_channel {
+                        ch.send(mv).unwrap();
+                    } else {
+                        eprintln!("Not expecting this player to move.");
+                    }
+                }
+                if current_board.player == 1 {
+                    if let Some(ch) = &self.player2_channel {
+                        ch.send(mv).unwrap();
+                    } else {
+                        eprintln!("Not expecting this player to move.");
+                    }
+                }
+            } else {
+                eprintln!("Could not parse move.");
+            }
+        } else {
+            eprintln!("Received unexpected message type.");
+        }
+
+        Ok(()) 
+    }
     fn on_request(&mut self, req :&ws::Request) -> ws::Result<ws::Response> {
         match req.resource() {
             "/ws" => ws::Response::from_request(req),
@@ -46,33 +81,51 @@ impl ws::Handler for ServerThread {
 fn main() {
     eprintln!("Quoridor");
 
-    let launch_ws = true;
+    //let launch_ws = true;
 
-    use std::sync::Arc;
-    use std::sync::Mutex;
-    use std::{thread,time};
 
     let current_board : Arc<Mutex<Board>> = Arc::new(Mutex::new(Default::default()));
-    let mut log_move :Box<FnMut(Move,&Board)> = Box::new(|_,_| {});
+    //let mut log_move :Box<FnMut(Move,&Board)> = Box::new(|_,_| {});
 
-    if launch_ws {
+    let ws_player1 = true;
+    let ws_player2 = true;
+
         let port = 9033;
         let addr = format!("localhost:{}", port);
         let current_board_ws = current_board.clone();
+
+        let (p1_ch_tx, p1_ch_rx) = if ws_player1 { let (tx,rx) = mpsc::channel(); (Some(tx),(Some(rx))) } else{ (None,None) };
+        let (p2_ch_tx, p2_ch_rx) = if ws_player2 { let (tx,rx) = mpsc::channel(); (Some(tx),(Some(rx))) } else{ (None,None) };
+
         let http = ws::WebSocket::new(move |out :ws::Sender| {
             eprintln!("New connection ({:?})", out.connection_id());
             let current_board = current_board_ws.lock().unwrap();
-            out.send(serde_json::to_string_pretty(&*current_board).unwrap()).unwrap();
-            ServerThread {}
+            let b = &*current_board;
+            let send_move = (b.player == 0 && ws_player1) || (b.player == 1 && ws_player2);
+            out.send(
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "board": serde_json::to_value(b).unwrap(),
+                    "send_move": send_move,
+                })).unwrap()).unwrap();
+            ServerThread {
+                current_board: current_board_ws.clone(),
+                player1_channel: p1_ch_tx.clone(),
+                player2_channel: p2_ch_tx.clone(),
+            }
         }).unwrap();
 
         let broadcaster = http.broadcaster();
         let current_board_log = current_board.clone();
-        log_move = Box::new(move |m,b| {
+        let log_move :Box<FnMut(Move,&Board)>= Box::new(move |m,b| {
             eprintln!("executed MOVE {:?} -- sending to ws", m);
             let mut current_board = current_board_log.lock().unwrap();
             *current_board = b.clone();
-            broadcaster.send(serde_json::to_string_pretty(b).unwrap()).unwrap();
+            let send_move = (b.player == 0 && ws_player1) || (b.player == 1 && ws_player2);
+            broadcaster.send(
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "board": serde_json::to_value(b).unwrap(),
+                    "send_move": send_move,
+                })).unwrap()).unwrap();
         });
 
 
@@ -80,7 +133,10 @@ fn main() {
             eprintln!("Info: Starting web server.");
             http.listen(addr).unwrap();
         });
-    }
+
+
+        let mut p1 = WSPlayer {   rx: p1_ch_rx.unwrap() };
+        let mut p2 = WSPlayer {   rx: p2_ch_rx.unwrap() };
 
 
     let addr = format!("http://{}/","localhost:9033");
@@ -94,8 +150,6 @@ fn main() {
 
 
 
-    let mut p1 = CLIPlayer { name: "p1"};
-    let mut p2 = CLIPlayer { name: "p2"};
     match play(&mut p1, &mut p2, log_move) {
         Ok(0) => eprintln!("Blue player won!"),
         Ok(1) => eprintln!("Red player won!"),
@@ -114,6 +168,18 @@ impl Player for CLIPlayer {
         parse(&line1).unwrap()
     }
 
+    fn reset(&mut self) {}
+}
+
+use std::sync::mpsc;
+pub struct WSPlayer {
+    rx :mpsc::Receiver<Move>,
+}
+
+impl Player for WSPlayer {
+    fn mv(&mut self, _mv :Option<Move>) -> Move {
+        self.rx.recv().unwrap()
+    }
     fn reset(&mut self) {}
 }
 

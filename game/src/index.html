@@ -6,6 +6,10 @@
 	  var cols = ["a", "b", "c", "d", "e", "f", "g", "h", "i"],
       rows = [9, 8, 7, 6, 5, 4, 3, 2, 1];
 
+function conv_col(i) {
+	return cols[i];
+}
+
   var whitecellcolor = "beige",
       blackcellcolor = "tan",
       textopacity = 0.75,
@@ -16,7 +20,7 @@
 
 
 var svg = d3.select("#board")
-      .attr("width", size + "px")
+      .attr("width", 2*size + "px")
       .attr("height", size + "px")
     .append("g")
       .attr("transform", "translate(" + margin + "," + margin + ")");
@@ -38,7 +42,7 @@ var nodes = svg.selectAll(".node")
 .attr("transform", function(d) { return "translate(" + (d[0])*gridSize + "," + (d[1])*gridSize  + ")"; });
 
 nodes.append("rect")
-      .attr("id", function(d){ return cols[d[0]-1] + (9 - d[1]); })
+      //.attr("id", function(d){ return cols[d[0]-1] + (9 - d[1]); })
       .attr("fill", function(d){ if ((d[1]+d[0])%2 != 0) return blackcellcolor; else return whitecellcolor; })
       .attr("width", gridSize)
       .attr("height", gridSize);
@@ -121,28 +125,227 @@ socket.onmessage = function (event) {
 	var t = d3.transition()
 		.duration(300);
 
-
       data = JSON.parse(event.data);
-	console.log(data);
-	console.log(data.positions);
-	console.log(data.positions[0]);
-	console.log([data.positions[0]]);
-	var players = svg.selectAll(".player").data(data.positions);
+	var send_move = data.send_move;
+	var board = data.board;
+	var players = svg.selectAll(".player").data(board.positions);
 
 	players.enter().append("circle")
 		.attr("class","player")
-		.attr("cx", function(d) { return gridSize*(d.x-0.5); })
-		.attr("cy", function(d) { return gridSize*(boardSize - d.y+0.5); })
 		.attr("fill", function(d,i) { if (i == 0) { return "red"; } else { return "blue"; } })
-		.attr("r", (gridSize/3));
-
-	players.transition(t)
+		.attr("r", (gridSize/3))
+	.merge(players).transition(t)
 		.attr("cx", function(d) { return gridSize*(d.x-0.5); })
 		.attr("cy", function(d) { return gridSize*(boardSize - d.y+0.5); });
 
-	var walls = svg.selectAll(".wall").data(data.walls);
-	
-	// TODO receive also win status and player's turn
+	//players.transition(t)
+	//	.attr("cx", function(d) { return gridSize*(d.x-0.5); })
+	//	.attr("cy", function(d) { return gridSize*(boardSize - d.y+0.5); });
+
+	var walls = svg.selectAll(".wall").data(board.walls);
+	walls.enter().append("line")
+	.attr("class","wall")
+	.attr("stroke","black")
+	.attr("stroke-width", 3)
+	.merge(walls)
+		.attr("x1", function(d) {  // 1-indexed!
+			if (d[0] == "Horizontal") {
+				return gridSize*(d[1].x-1);
+			} else {
+				return gridSize*(d[1].x);
+			}})
+		.attr("y1", function(d) { 
+			if (d[0] == "Horizontal") {
+				return gridSize*(boardSize - (d[1].y));
+			} else {
+				return gridSize*(boardSize - (d[1].y-1));
+			}})
+		.attr("x2", function(d) { 
+			if (d[0] == "Horizontal") {
+				return gridSize*(d[1].x+1);
+			} else {
+				return gridSize*(d[1].x);
+			}})
+		.attr("y2", function(d) { 
+			if (d[0] == "Horizontal") {
+				return gridSize*(boardSize - (d[1].y));
+			} else {
+				return gridSize*(boardSize - (d[1].y+1));
+			}});
+
+	//walls": [
+    //[
+    //  "Horizontal",
+    //  {
+    //    "x": 5,
+    //    "y": 6
+    //  }
+    //]
+
+	var currentplayer = svg.selectAll(".currentplayer").data([board.player]);
+	currentplayer
+	   .enter().append("text")
+            .attr("class", "currentplayer")
+            .style("font-size", gridSize/3 + "px")
+            .style("text-anchor", "left")
+            .style("opacity", textopacity)
+            .attr("transform", "translate(" + gridSize*10 + "," + gridSize + ")")
+            .style("font-size", gridSize/3 + "px")
+	.merge(currentplayer)
+	   .text(function(d) { 
+	     if (d == 0) {
+	   return "Current player: Red";
+	   } else {
+	   return "Current player: Blue";
+	   }});
+	currentplayer.exit().remove();
+
+	var wallsleft = svg.selectAll(".wallsleft").data(board.walls_left);
+		wallsleft	
+	   .enter().append("text")
+            .attr("class", "wallsleft")
+            .style("font-size", gridSize/3 + "px")
+            .style("text-anchor", "left")
+            .style("opacity", textopacity)
+	.attr("transform", function(d,i) { return "translate(" + gridSize*10 + "," + ((1.5+0.5*i)*gridSize) + ")"; })
+            .style("font-size", gridSize/3 + "px")
+	.merge(wallsleft)
+	   .text(function(d,i) { 
+	     if (i == 0) {
+	   return "Red has " + d + " walls left.";
+	   } else {
+	   return "Blue has " + d + " walls left.";
+	   }});
+	wallsleft.exit().remove();
+
+	var sendinput = svg.selectAll(".sendinput").data([send_move]);
+		sendinput	
+	   .enter().append("text")
+            .attr("class", "sendinput")
+            .style("text-anchor", "left")
+            .style("opacity", textopacity)
+	.attr("transform", function(d,i) { return "translate(" + gridSize*10 + "," + ((1.5+0.5*2)*gridSize) + ")"; })
+            .style("font-size", gridSize/3 + "px")
+	.merge(sendinput)
+	   .text(function(d,i) { 
+	     if (d == true) {
+		     return "Send input.";
+	   } else {
+		   return "Waiting for other player.";
+	   }});
+	sendinput.exit().remove();
+
+	var move_to = [];
+	if (send_move) {
+		for(x = 0; x < 9; x++) {
+			for(y = 0; y < 9; y++)  {
+				if (!(x == board.positions[0].x-1 && y == board.positions[0].y-1) && 
+				    !(x == board.positions[1].x-1 && y == board.positions[1].y-1) ) {
+					move_to.push( {x:x,y:y});
+				   }
+			}
+		}
+	}
+
+
+	var moveButtons = svg.selectAll(".movebutton").data(move_to);
+	moveButtons.enter().append("circle")
+		.attr("class","movebutton")
+		.attr("fill", "gray")
+	   .style("opacity","0.0")
+	  .style("cursor", "pointer")
+	   .on('mouseover',function() {
+		d3.select(this)
+		  .transition()
+		  .duration(50)
+		  .style('opacity',"1.0")
+	      })
+	      .on('mouseout',function () {
+		d3.select(this)
+		  .transition()
+		  .duration(300)
+		  .style('opacity',"0.0")
+	      })
+		.attr("r", (gridSize/4))
+	   .on("click", function(d) {
+		   socket.send("" + cols[d.x] + (d.y+1));
+	   })
+	.merge(moveButtons)
+		.attr("cx", function(d) { return gridSize*(d.x+0.5); })
+		.attr("cy", function(d) { return gridSize*(boardSize - (d.y+1)+0.5); });
+
+	   moveButtons.exit().remove();
+
+	var wall_at = [];
+	if (send_move) {
+		for (x = 0; x < 8; x++) {
+			for (y = 0; y < 8; y++) {
+				wall_at.push(["Horizontal", { x: x, y: y }]);
+				wall_at.push(["Vertical", { x: x, y: y }]);
+			}
+		}
+	}
+
+	var wallButtons = svg.selectAll(".wallbutton").data(wall_at);
+	wallButtonsGroup = wallButtons.enter().append("g")
+	.attr("class","wallbutton")
+	   .style("opacity","0.0");
+
+	wallButtonsGroup.append("line")
+	.attr("stroke","gray")
+	.attr("stroke-width", 10)
+		.attr("x1", function(d) { 
+			if (d[0] == "Horizontal") { return gridSize*(d[1].x); } 
+			   else { return gridSize*(d[1].x+1);
+			}})
+		.attr("y1", function(d) { 
+			if (d[0] == "Horizontal") { return gridSize*(boardSize - (d[1].y+1));
+			} else { return gridSize*(boardSize - (d[1].y));
+			}})
+		.attr("x2", function(d) { 
+			if (d[0] == "Horizontal") { return gridSize*(d[1].x+1);
+			} else { return gridSize*(d[1].x+1);
+			}})
+		.attr("y2", function(d) { 
+			if (d[0] == "Horizontal") { return gridSize*(boardSize - (d[1].y+1));
+			} else { return gridSize*(boardSize - (d[1].y+1));
+			}})
+	   .on('mouseover',function() {
+		d3.select(this.parentNode)
+		  .transition()
+		  .duration(50)
+		  .style('opacity',"1.0")
+	      })
+	      .on('mouseout',function () {
+		d3.select(this.parentNode)
+		  .transition()
+		  .duration(300)
+		  .style('opacity',"0.0")
+	      })
+	   .on("click", function(d) {
+		   socket.send("" + cols[d[1].x] + (d[1].y+1) + (d[0] == "Horizontal" ? "h" : "v"));
+	   })
+	   ;
+
+	wallButtonsGroup.append("line")
+	.attr("stroke","gray")
+	.attr("stroke-width", 10)
+		.attr("x1", function(d) { 
+			if (d[0] == "Horizontal") { return gridSize*(d[1].x+1); } 
+			   else { return gridSize*(d[1].x+1);
+			}})
+		.attr("y1", function(d) { 
+			if (d[0] == "Horizontal") { return gridSize*(boardSize - (d[1].y+1));
+			} else { return gridSize*(boardSize - (d[1].y+1));
+			}})
+		.attr("x2", function(d) { 
+			if (d[0] == "Horizontal") { return gridSize*(d[1].x+2);
+			} else { return gridSize*(d[1].x+1);
+			}})
+		.attr("y2", function(d) { 
+			if (d[0] == "Horizontal") { return gridSize*(boardSize - (d[1].y+1));
+			} else { return gridSize*(boardSize - (d[1].y+2));
+			}})
 
 };
 

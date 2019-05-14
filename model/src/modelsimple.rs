@@ -26,9 +26,10 @@ pub struct Position {
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 #[derive(Serialize, Deserialize)]
 pub struct Board {
-    pub player :usize,
-    pub positions :[Position;2],
-    pub walls_left :[usize;2],
+    pub player :usize, // 1 u8
+    pub positions :[Position;2], // 2*2 u8
+    pub walls_left :[usize;2], // 2*u8
+    // total size: 7 u8 < 64bit
     pub walls :Vec<(Orientation,Position)>
         // a wall is an orientation and a coordinate.
         // for horizontal walls:
@@ -58,8 +59,8 @@ impl Default for Board {
             player: 0,
             walls_left: [10,10],
             positions: [
-                Position { x: 5, y: 9 },
                 Position { x: 5, y: 1 },
+                Position { x: 5, y: 9 },
             ],
             walls: Vec::new(),
         }
@@ -93,6 +94,7 @@ impl Board {
     pub fn is_valid_move(&self, pos :&Position) -> bool {
         if !in_bounds1to9(pos) { return false; }
         if is_neighbor(&self.positions[self.player], pos) {
+            eprintln!("{:?} IS NEIGHBOR OF {:?}", &self.positions[self.player], pos);
             if !self.is_empty(pos) { return false; }
             if self.wall_between(&self.positions[self.player], pos) { return false; }
             true
@@ -106,8 +108,8 @@ impl Board {
     }
 
     pub fn get_winner(&self) -> Option<usize> {
-        if self.positions[0].y == 1 { return Some(0); }
-        if self.positions[1].y == 9 { return Some(1); }
+        if self.positions[0].y == 9 { return Some(0); }
+        if self.positions[1].y == 1 { return Some(1); }
         None
     }
 
@@ -137,6 +139,7 @@ impl Board {
                 }
             }
         } else {
+            eprintln!("Could not check for wall between {:?} and {:?}", a, b);
             panic!();
         }
         false
@@ -170,6 +173,7 @@ impl Board {
         let diagonal_jump   = (end.x - start.x).abs() == 1 && (end.y - start.y).abs() == 1;
 
         let other_player_pos = self.positions[1 - self.player];
+        if !is_neighbor(&start, &other_player_pos) { return false; }
 
         if horizontal_jump || vertical_jump {
             let middle_pos = Position { x: (start.x + end.x)/2, y: (start.y + end.y)/2 };
