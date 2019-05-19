@@ -91,7 +91,7 @@ pub fn for_each_wall_move(board :&Board, f : &mut FnMut(Move)->bool) -> bool{
 }
 
 /// measure the board's worth directly
-pub fn board_heuristic(board :&Board) -> f64 {
+pub fn board_heuristic(board :&Board) -> f32 {
     // assumptions:
     // positive number is player1 advantage
     // zero-sum =>  score(player1,board) = -score(player2,board)
@@ -133,7 +133,7 @@ pub fn board_heuristic(board :&Board) -> f64 {
     
     if let Some(winner) = board.get_winner() {
         let sign = winner * 2 - 1;
-        return (sign as f64) *std::f64::INFINITY;
+        return (sign as f32) *std::f32::INFINITY;
     }
 
     let wall_weight = 1;
@@ -143,7 +143,7 @@ pub fn board_heuristic(board :&Board) -> f64 {
     //
     ((player_flow(board,0) - player_flow(board,1)) + 
         wall_weight*(board.walls_left[0] as u64 - board.walls_left[1] as u64 ))
-        as f64
+        as f32
 }
 
 pub fn for_each_adjacent_cell(board :&Board, pos :Position,mut f:impl FnMut(Position)) {
@@ -167,7 +167,7 @@ pub fn player_flow(board :&Board, player :usize) -> u64 {
     let pos = board.positions[player];
     let pos = encode9(pos.x, pos.y) as isize;
 
-    let mut edges : Vec<(u64,ArrayVec::<[isize; 4]>)> = vec![(0,ArrayVec::new()); 81];
+    let mut edges : Vec<(u64,ArrayVec<[isize; 4]>)> = vec![(0,ArrayVec::new()); 81];
     let mut queue : VecDeque<isize> = Default::default();
 
     queue.push_back(pos);
@@ -191,7 +191,7 @@ pub fn player_flow(board :&Board, player :usize) -> u64 {
     }
 
     fn find_path(source :isize,
-                 residual :&Vec<(u64, ArrayVec::<[isize;4]>)>, 
+                 residual :&Vec<(u64, ArrayVec<[isize;4]>)>, 
                  parent :&mut [isize;81], 
                  end :&mut isize,
                  goal_y :usize) -> bool{
@@ -250,21 +250,22 @@ pub fn player_flow(board :&Board, player :usize) -> u64 {
     flow
 }
 
+#[repr(u16)]
 pub enum BoardFlag { Exact, LowerBound, UpperBound }
 pub struct BoardInfo {
+    pub value: f32,
+    pub depth: u16,
     pub flag :BoardFlag,
-    pub depth: usize,
-    pub value: f64,
-}
+} // size should be 64bit
 
 pub fn negamax_root(table :&mut HashMap<Board, BoardInfo>, board :&Board,
-                    depth: usize) -> Move {
+                    depth: u16) -> Move {
 
-    let (mut score, mut mv) = (-std::f64::INFINITY, None);
+    let (mut score, mut mv) = (-std::f32::INFINITY, None);
     for_each_move(&board, &mut |m| {
         let mut new_board = board.clone();
         new_board.integrate(m).unwrap();
-        let new_score = -negamax(table, &new_board, depth, -std::f64::INFINITY, std::f64::INFINITY);
+        let new_score = -negamax(table, &new_board, depth, -std::f32::INFINITY, std::f32::INFINITY);
         if new_score >= score {
             score = new_score;
             mv = Some(m);
@@ -276,7 +277,7 @@ pub fn negamax_root(table :&mut HashMap<Board, BoardInfo>, board :&Board,
 }
 
 pub fn negamax(table :&mut HashMap<Board, BoardInfo>, board :&Board,
-               depth: usize, mut alpha :f64, mut beta :f64) -> f64 {
+               depth: u16, mut alpha :f32, mut beta :f32) -> f32 {
     let alpha_original = alpha;
 
     // check the table
@@ -293,12 +294,12 @@ pub fn negamax(table :&mut HashMap<Board, BoardInfo>, board :&Board,
     }
 
     if depth == 0 || board.get_winner().is_some() {
-        return ((1-2*board.player) as f64)*board_heuristic(board); // board heuristic always
+        return ((1-2*board.player) as f32)*board_heuristic(board); // board heuristic always
         // takes the perspective of player 1 (first), so we multiply by the current player we
         // are looking at.
     }
 
-    let mut value = - std::f64::INFINITY;
+    let mut value = - std::f32::INFINITY;
     // TODO order moves by heuristic?
     for_each_move(&board, &mut |m| {
         let mut new_board = board.clone();

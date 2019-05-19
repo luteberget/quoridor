@@ -3,6 +3,92 @@ use model::*;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::{thread,time};
+use std::io::{BufRead, Write};
+
+pub struct ChannelPlayer {
+    pub tx :mpsc::Sender<Option<Move>>,
+    pub rx :mpsc::Receiver<Move>,
+}
+
+impl Player for ChannelPlayer {
+    fn mv(&mut self, mv:Option<Move>) -> Move {
+        self.tx.send(mv).unwrap();
+        self.rx.recv().unwrap()
+    }
+
+    fn reset(&mut self) {}
+}
+
+impl ChannelPlayer {
+    pub fn from_thread<F2: FnOnce() + Send + 'static>
+        (f :impl FnOnce(mpsc::Receiver<Option<Move>>, mpsc::Sender<Move>) -> F2) -> Self {
+        let (input_tx,input_rx) = mpsc::channel();
+        let (output_tx,output_rx) = mpsc::channel();
+        thread::spawn(f(input_rx, output_tx));
+        ChannelPlayer {
+            tx: input_tx,
+            rx: output_rx,
+        }
+    }
+}
+
+pub fn protocol(mut r :impl BufRead, mut w: impl Write, 
+                input :&mpsc::Receiver<Option<Move>>, output :&mpsc::Sender<Move>) {
+        loop {
+            // Send move
+            let mv = input.recv().unwrap();
+            match mv {
+                None => w.write("start\n".as_bytes()).unwrap(),
+                Some(mv) => w.write(format!("{}\n",printer(&mv)).as_bytes()).unwrap(),
+            };
+
+            // Receive answer
+            let mut line :String = String::new();
+            let mv_str = r.read_line(&mut line).unwrap();
+            let mv = parse(line.lines().next().unwrap()).unwrap();
+            output.send(mv).unwrap();
+        }
+}
+
+pub fn stdio_player(program :String) -> impl Player {
+    ChannelPlayer::from_thread(|input,output| move || {
+        use std::process::*;
+        use std::io::Write;
+
+        let args = shell_words::split(&program).unwrap();
+        eprintln!("Launching process {:?}", args);
+        let proc = Command::new(&args[0]).args(&args[1..])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn().unwrap();
+        use std::io::BufRead;
+        let mut reader = std::io::BufReader::new(proc.stdout.unwrap());
+        protocol(reader, proc.stdin.unwrap(), &input, &output);
+    })
+}
+
+pub fn net_player(port :u32) -> impl Player {
+    ChannelPlayer::from_thread(|input,output| move || {
+        use std::thread;
+        use std::net::{TcpListener, TcpStream, Shutdown};
+        use std::io::{Read, Write};
+
+        let addr = format!("0.0.0.0:{}",port);
+        let listener = TcpListener::bind(&addr).unwrap();
+        eprintln!("Waiting for connection on {}", addr);
+        match listener.accept() {
+            Ok((stream,addr)) => {
+                eprintln!("New connection: {}", addr);
+                use std::io::BufRead;
+                let mut reader = std::io::BufReader::new(&stream);
+                protocol(reader, &stream, &input, &output);
+            },
+            Err(_) => {
+            },
+        };
+    })
+}
+
 
 static INDEX_HTML :&'static [u8] = include_bytes!("index.html");
 static D3_JS :&'static [u8] = include_bytes!("d3/d3.js");
@@ -63,6 +149,72 @@ impl ws::Handler for ServerThread {
             _ => Ok(ws::Response::new(404, "Not Found", b"404 - Not found".to_vec())),
         }
     }
+}
+
+struct Opts {
+    show_gui: bool,
+    verbose: bool,
+    p1: Box<Player>,
+    p2: Box<Player>,
+}
+
+fn get_opts() -> Result<Opts,&'static str> {
+    use std::env;
+
+    let mut show_gui = false;
+    let mut verbose = false;
+    let mut p1 :Option<Box<Player>> = None;
+    let mut p2 :Option<Box<Player>> = None;
+    let mut web_players = (None,None);
+
+    let mut args = env::args();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-g" => { show_gui = true; },
+            "-v" => { verbose = true; },
+            "cli" => {
+                if p1.is_none() { p1 = Some(Box::new(CLIPlayer {name: "Player1" })); }
+                else if p2.is_none() { p1 = Some(Box::new(CLIPlayer {name: "Player2"})); }
+                else { return Err("More than two players requested."); }
+            },
+            "gui" => {
+                if p1.is_none() { 
+                    let (tx,rx) = mpsc::channel();
+                    web_players.0 = Some(tx);
+                    p1 = Some(Box::new(WSPlayer {rx}));
+
+                }
+                else if p2.is_none() { 
+                    let (tx,rx) = mpsc::channel();
+                    web_players.1 = Some(tx);
+                    p2 = Some(Box::new(WSPlayer {rx}));
+                }
+                else { return Err("More than two players requested."); }
+            },
+            "run" => {
+                let program : String = args.next().ok_or("Run program requires argument")?;
+                if p1.is_none() { p1 = Some(Box::new(stdio_player(program))); }
+                else if p2.is_none() { p1 = Some(Box::new(stdio_player(program))); }
+                else { return Err("More than two players requested."); }
+            },
+            "net" => {
+                let port :u32 = args.next().ok_or("Net program requires port")?
+                    .parse::<u32>().map_err(|_| "Could not parse port number for net player.")?;
+                if p1.is_none() { p1 = Some(Box::new(net_player(port))); }
+                else if p2.is_none() { p1 = Some(Box::new(net_player(port))); }
+                else { return Err("More than two players requested."); }
+            },
+            _ => { return Err("Unrecognized argument"); },
+        }
+    }
+    
+
+    Ok(Opts {
+        show_gui: show_gui,
+        verbose: verbose,
+        p1: p1.unwrap(),
+        p2: p2.unwrap(),
+    })
 }
 
 fn main() {
@@ -206,4 +358,21 @@ fn play<A: Player, B: Player>(p1 :&mut A, p2: &mut B, mut log :Box<FnMut(Move,&B
         last_move = p1.mv(Some(last_move));
     }
 }
+
+
+fn play_dyn<'a> (p1 :&'a mut dyn Player, 
+                 p2 :&'a mut dyn Player, 
+                 log :&mut dyn FnMut(Move, &Board)) -> Result <usize,usize> {
+    let mut board :Board = Default::default();
+    let mut last_move :Option<Move> = None;
+    let (mut current_player,mut next_player) = ((p1,0usize),(p2,1usize)); // Player 1 starts.
+    loop {
+        last_move = Some(current_player.0.mv(last_move));
+        board.integrate(last_move.unwrap()).map_err(|_| next_player.1)?;
+        log(last_move.unwrap(), &board);
+        if let Some(winner) = board.get_winner() { return Ok(winner); }
+        std::mem::swap(&mut current_player, &mut next_player);
+    }
+}
+
 

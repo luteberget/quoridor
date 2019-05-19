@@ -76,6 +76,9 @@ pub fn parse(s :&str) -> Result<Move,()> {
 }
 
 
+pub fn printer(mv :&Move) -> String {
+    unimplemented!()
+}
 
 
 #[cfg(test)]
