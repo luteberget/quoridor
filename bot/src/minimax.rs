@@ -1,6 +1,44 @@
 use std::collections::{HashMap, VecDeque};
 use arrayvec::ArrayVec;
 use model::*;
+use log::*;
+
+
+pub struct HeuristicBot {
+    board :Board,
+}
+
+impl HeuristicBot {
+    pub fn new(board :Board) -> HeuristicBot {
+        HeuristicBot { board }
+    }
+}
+
+impl Player for HeuristicBot {
+    fn reset (&mut self) {}
+
+    fn mv(&mut self, mv :Option<Move>) -> Move {
+        info!("HeuristicPlayer Received move {:?}", mv);
+        if let Some(mv) = mv { self.board.integrate(mv).unwrap(); }
+        let (mut score, mut mv) = (-std::f32::INFINITY, None);
+        for_each_move(&self.board, &mut |m| {
+            let mut new_board = self.board.clone();
+            new_board.integrate(m).unwrap();
+            debug!("Evaluating heuristic for {:?}", new_board);
+            let new_score = (1.0-2.0*(new_board.player as f32))*board_heuristic(&new_board); // board heuristic always
+            debug!("  Score: {}", new_score);
+            if new_score >= score {
+                score = new_score;
+                mv = Some(m);
+            }
+            true
+        });
+
+        self.board.integrate(mv.unwrap()).unwrap();
+        mv.unwrap()
+
+    }
+}
 
 pub struct MinimaxPlayer {
     board :Board,
@@ -141,8 +179,8 @@ pub fn board_heuristic(board :&Board) -> f32 {
     //
     // (f_a - f_b) + p*(w_a - w_b)
     //
-    ((player_flow(board,0) - player_flow(board,1)) + 
-        wall_weight*(board.walls_left[0] as u64 - board.walls_left[1] as u64 ))
+    ((player_flow(board,0) as i64 - player_flow(board,1) as i64) + 
+        wall_weight*(board.walls_left[0] as i64 - board.walls_left[1] as i64 ))
         as f32
 }
 
@@ -165,9 +203,10 @@ pub fn player_flow(board :&Board, player :usize) -> u64 {
     // USE only encode9 positions inside this function with type isize
     //
     let pos = board.positions[player];
+    debug!("player_flow, pos= {:?}", pos);
     let pos = encode9(pos.x, pos.y) as isize;
 
-    let mut edges : Vec<(u64,ArrayVec<[isize; 4]>)> = vec![(0,ArrayVec::new()); 81];
+    let mut edges : Vec<(u64,ArrayVec<[isize; 4]>)> = vec![(0,ArrayVec::new()); 9*9];
     let mut queue : VecDeque<isize> = Default::default();
 
     queue.push_back(pos);
@@ -175,6 +214,7 @@ pub fn player_flow(board :&Board, player :usize) -> u64 {
 
     while let Some(p) = queue.pop_front() {
         for_each_adjacent_cell(board, decode9(p as usize), |q| {
+            //trace!("Adjacent cell {:?}", q);
             let q = encode9(q.x,q.y) as isize;
             // add a link from p to q
             edges[p as usize].1.push(q);
@@ -196,19 +236,25 @@ pub fn player_flow(board :&Board, player :usize) -> u64 {
                  end :&mut isize,
                  goal_y :usize) -> bool{
 
+        //if residual[source as usize].0 <= 0 { return false; }
+
         let mut visited = [false;81];
         let mut queue = VecDeque::new();
         queue.push_back(source);
         visited[source as usize] = true;
         while let Some(p) = queue.pop_front() {
 
-            if p/9 == goal_y as isize { // decode9(p).y == goal_y
+            if decode9(p as usize).y == goal_y as i64 { // decode9(p).y == goal_y
                 *end = p;
                 return true;
             }
 
-            if residual[p as usize].0 > 0 {
-                for q in &residual[p as usize].1 {
+            for q in &residual[p as usize].1 {
+                if residual[*q as usize].0 > 0 {
+                    //trace!("Residual OK {:?} {:?} --> {:?} {:?} {}", 
+                    //       p, decode9(p as usize), 
+                    //       q, decode9(*q as usize), 
+                    //       residual[p as usize].0);
                     if !visited[*q as usize] {
                         queue.push_back(*q);
                         parent[*q as usize] = p;
@@ -231,18 +277,24 @@ pub fn player_flow(board :&Board, player :usize) -> u64 {
     let mut residual = edges;
     //let source = encode9(player.x, player.y) as isize;
     let source = pos as isize;
-    let goal_y = if player == 0 { 1 } else { 9 };
+    debug!("*** MAX FLOW");
+    //debug!("Residual flow {:?}", residual);
+    //debug!("Starting from source {:?} {:?}", source, decode9(source as usize));
+    let goal_y = if player == 0 { 9 } else { 1 };
     while find_path(source, &residual, &mut parent, &mut end, goal_y) {
+        //trace!("Found path to {:?} {:?}", end, decode9(end as usize));
         let mut path_flow = 100;
         let mut n = end;
         while n != source {
             path_flow = path_flow.min(residual[n as usize].0);
+            //trace!("Through {:?} {:?}, flow max {:?}", n, decode9(n as usize), path_flow);
             n = parent[n as usize];
+            //trace!("  - came from {:?} {:?}", n, decode9(n as usize));
         }
         flow += path_flow;
         let mut n = end;
         while n != source {
-            residual[n as usize].0 -= flow;
+            residual[n as usize].0 -= path_flow;
             n = parent[n as usize];
         }
     }

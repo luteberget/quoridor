@@ -19,17 +19,24 @@ pub enum Orientation {
 #[derive(Serialize, Deserialize)]
 pub struct Position {
     pub x: i64,
-    pub y: i64
+    pub y: i64,
 }
 
 // use std::hash::Hash;
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 #[derive(Serialize, Deserialize)]
 pub struct Board {
+    // with this non-optimized size, we get:
+    //  player=64, positions: 2*2*64, walls_left: 2*64, vec=3*64?
+    //  so (1+4+2+3) = 80 bytes
+    // Can be improved to 24 bytes (2x64 bit walls, 7x8bit numbers -- current player, walls left,
+    // positions)
     pub player :usize, // 1 u8
     pub positions :[Position;2], // 2*2 u8
     pub walls_left :[usize;2], // 2*u8
     // total size: 7 u8 < 64bit
+    //
+    //
     pub walls :Vec<(Orientation,Position)>
         // a wall is an orientation and a coordinate.
         // for horizontal walls:
@@ -247,11 +254,11 @@ fn bitset_add_wall(horizontal_walls :&mut u64, vertical_walls :&mut u64,
 }
 
 pub fn encode9(x :i64, y :i64) -> usize {
-    (x+9*y) as usize
+    ((x-1)+9*(y-1)) as usize
 }
 
 pub fn decode9(p :usize) -> Position {
-    Position { x: (p%9usize) as i64, y: (p/9usize) as i64 }
+    Position { x: (p%9usize) as i64 + 1, y: (p/9usize) as i64 + 1 }
 }
 
 pub fn encode8(x :i64, y :i64) -> usize {
@@ -276,19 +283,19 @@ pub fn goal_reachable(horizontal_walls: u64,
 
     for x in 0..=8 {
         for y in 0..=8 {
-            let this_node = encode9(x,y);
+            let this_node = encode9(x+1,y+1);
             if x < 8  {
                 // go right
                 if !(y < 8 && vertical_walls.get_bit(encode8(x,y))) &&
                    !(y > 0 && vertical_walls.get_bit(encode8(x,y-1))) {
-                       uf.union(this_node,encode9(x+1,y));
+                       uf.union(this_node,encode9(x+1+1,y+1));
                    }
             }
             if x > 0  {
                 // go left 
                 if !(y < 8 && vertical_walls.get_bit(encode8(x-1,y))) &&
                    !(y > 0 && vertical_walls.get_bit(encode8(x-1,y-1))) {
-                       uf.union(this_node,encode9(x-1,y));
+                       uf.union(this_node,encode9(x-1+1,y+1));
                    }
             }
 
@@ -296,22 +303,22 @@ pub fn goal_reachable(horizontal_walls: u64,
                 // go down
                 if !(x < 8 && horizontal_walls.get_bit(encode8(x,y))) &&
                    !(x > 0 && horizontal_walls.get_bit(encode8(x-1,y))) {
-                       uf.union(this_node,encode9(x,y+1));
+                       uf.union(this_node,encode9(x+1,y+1+1));
                    }
             }
             if y > 0  {
                 // go up
                 if !(x < 8 && horizontal_walls.get_bit(encode8(x,y-1))) &&
                    !(x > 0 && horizontal_walls.get_bit(encode8(x-1,y-1))) {
-                       uf.union(this_node,encode9(x,y-1));
+                       uf.union(this_node,encode9(x+1,y-1+1));
                    }
             }
         }
     }
 
-    let this_value = uf.find(encode9(pos.x-1,pos.y-1));
+    let this_value = uf.find(encode9(pos.x,pos.y));
     for x in 0..=8 {
-        if this_value == uf.find(encode9(x,goal_row-1)) {
+        if this_value == uf.find(encode9(x+1,goal_row)) {
             return true;
         }
     }
@@ -484,6 +491,16 @@ mod tests {
         // now we can jump diagonally #2
         assert!(board.integrate(
                 Move::PawnTo(Position { x: 6, y: 6 })).is_ok());
+    }
+
+    #[test]
+    pub fn board_struct_size() {
+        // The size of Board should be as small as possible
+        // to ensure efficient memoization of the heuristic function 
+        // and the minimax function.
+        //
+        assert_eq!(8*3, std::mem::size_of::<Vec<usize>>());
+        assert_eq!(8*(3+7), std::mem::size_of::<Board>()); // TODO optimize size
     }
 
 }
