@@ -75,9 +75,20 @@ pub fn parse(s :&str) -> Result<Move,()> {
     Err(())
 }
 
+pub fn print_pos(pos :Position) -> String {
+    let rows = &['a','b','c','d','e','f','g','h','i'];
+    let cols = &[1,2,3,4,5,6,7,8,9];
+    format!("{}{}", 
+           rows[pos.x as usize-1], 
+           cols[pos.y as usize-1])
+}
 
 pub fn printer(mv :&Move) -> String {
-    unimplemented!()
+    match mv {
+        Move::PawnTo(pos) => print_pos(*pos),
+        Move::WallAt(Orientation::Vertical,pos) => format!("{}v", print_pos(*pos)),
+        Move::WallAt(Orientation::Horizontal,pos) => format!("{}h", print_pos(*pos)),
+    }
 }
 
 

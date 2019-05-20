@@ -1,5 +1,6 @@
 use model::*;
 
+use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::{thread,time};
@@ -53,15 +54,12 @@ pub fn protocol(mut r :impl BufRead, mut w: impl Write,
 pub fn stdio_player(program :String) -> impl Player {
     ChannelPlayer::from_thread(|input,output| move || {
         use std::process::*;
-        use std::io::Write;
-
         let args = shell_words::split(&program).unwrap();
         eprintln!("Launching process {:?}", args);
         let proc = Command::new(&args[0]).args(&args[1..])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn().unwrap();
-        use std::io::BufRead;
         let mut reader = std::io::BufReader::new(proc.stdout.unwrap());
         protocol(reader, proc.stdin.unwrap(), &input, &output);
     })
@@ -69,22 +67,16 @@ pub fn stdio_player(program :String) -> impl Player {
 
 pub fn net_player(port :u32) -> impl Player {
     ChannelPlayer::from_thread(|input,output| move || {
-        use std::thread;
-        use std::net::{TcpListener, TcpStream, Shutdown};
-        use std::io::{Read, Write};
-
         let addr = format!("0.0.0.0:{}",port);
-        let listener = TcpListener::bind(&addr).unwrap();
+        let listener = std::net::TcpListener::bind(&addr).unwrap();
         eprintln!("Waiting for connection on {}", addr);
         match listener.accept() {
             Ok((stream,addr)) => {
                 eprintln!("New connection: {}", addr);
-                use std::io::BufRead;
                 let mut reader = std::io::BufReader::new(&stream);
                 protocol(reader, &stream, &input, &output);
             },
-            Err(_) => {
-            },
+            Err(_) => { panic!() },
         };
     })
 }
@@ -156,9 +148,10 @@ struct Opts {
     verbose: bool,
     p1: Box<Player>,
     p2: Box<Player>,
+    log_move: Box<FnMut(Move,&Board)>,
 }
 
-fn get_opts() -> Result<Opts,&'static str> {
+fn get_opts(board :Arc<Mutex<Board>>) -> Result<Opts,&'static str> {
     use std::env;
 
     let mut show_gui = false;
@@ -166,15 +159,17 @@ fn get_opts() -> Result<Opts,&'static str> {
     let mut p1 :Option<Box<Player>> = None;
     let mut p2 :Option<Box<Player>> = None;
     let mut web_players = (None,None);
+    let mut log_move = None;
 
     let mut args = env::args();
+    let _exe_name = args.next();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-g" => { show_gui = true; },
             "-v" => { verbose = true; },
             "cli" => {
                 if p1.is_none() { p1 = Some(Box::new(CLIPlayer {name: "Player1" })); }
-                else if p2.is_none() { p1 = Some(Box::new(CLIPlayer {name: "Player2"})); }
+                else if p2.is_none() { p2 = Some(Box::new(CLIPlayer {name: "Player2"})); }
                 else { return Err("More than two players requested."); }
             },
             "gui" => {
@@ -194,105 +189,89 @@ fn get_opts() -> Result<Opts,&'static str> {
             "run" => {
                 let program : String = args.next().ok_or("Run program requires argument")?;
                 if p1.is_none() { p1 = Some(Box::new(stdio_player(program))); }
-                else if p2.is_none() { p1 = Some(Box::new(stdio_player(program))); }
+                else if p2.is_none() { p2 = Some(Box::new(stdio_player(program))); }
                 else { return Err("More than two players requested."); }
             },
             "net" => {
                 let port :u32 = args.next().ok_or("Net program requires port")?
                     .parse::<u32>().map_err(|_| "Could not parse port number for net player.")?;
                 if p1.is_none() { p1 = Some(Box::new(net_player(port))); }
-                else if p2.is_none() { p1 = Some(Box::new(net_player(port))); }
+                else if p2.is_none() { p2 = Some(Box::new(net_player(port))); }
                 else { return Err("More than two players requested."); }
             },
-            _ => { return Err("Unrecognized argument"); },
+            x => { eprintln!("Unrecognized arg: {}", x); return Err("Unrecognized argument"); },
         }
     }
+
+    if p1.is_none() || p2.is_none() {
+        return Err("Need two players.");
+    }
     
+    if !show_gui && (web_players.0.is_some() || web_players.1.is_some()) {
+        return Err("Need -g switch to have GUI player.");
+    }
+
+    if show_gui {
+        log_move = Some(start_ws(board, web_players.0, web_players.1));
+    }
 
     Ok(Opts {
         show_gui: show_gui,
         verbose: verbose,
         p1: p1.unwrap(),
         p2: p2.unwrap(),
+        log_move: log_move.unwrap_or(Box::new(|_,_| {})),
     })
 }
 
-fn main() {
-    use std::env;
-    eprintln!("Quoridor");
-    
-    struct Opts {
-        show_gui :bool, //verbose: bool,
-        p1: Box<Player>,
-        p2: Box<Player>,
-    }
 
-    let mut opts = Opts { show_gui: false, 
-        //verbose: bool,
-        p1: Box::new(CLIPlayer{name: "p1"}),
-        p2: Box::new(CLIPlayer{name: "p2"}) };
+pub fn start_ws(board :Arc<Mutex<Board>>, 
+                p1 :Option<mpsc::Sender<Move>>, 
+                p2 :Option<mpsc::Sender<Move>>) -> Box<FnMut(Move, &Board)> {
 
-    let mut args = env::args();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-g" => { opts.show_gui = true; },
-            _ => panic!("arg err"),
-        }
-    }
+    let port = 9033;
+    let addr = format!("localhost:{}", port);
+    let board_ws = board.clone();
 
-    let current_board : Arc<Mutex<Board>> = Arc::new(Mutex::new(Default::default()));
-    let ws_player1 = true;
-    let ws_player2 = true;
-
-        let port = 9033;
-        let addr = format!("localhost:{}", port);
-        let current_board_ws = current_board.clone();
-
-        let (p1_ch_tx, p1_ch_rx) = if ws_player1 { let (tx,rx) = mpsc::channel(); (Some(tx),(Some(rx))) } else{ (None,None) };
-        let (p2_ch_tx, p2_ch_rx) = if ws_player2 { let (tx,rx) = mpsc::channel(); (Some(tx),(Some(rx))) } else{ (None,None) };
-
-        let http = ws::WebSocket::new(move |out :ws::Sender| {
+    let http = { 
+        let (p1,p2) = (p1.clone(),p2.clone());
+        ws::WebSocket::new(move |out :ws::Sender| {
             eprintln!("New connection ({:?})", out.connection_id());
-            let current_board = current_board_ws.lock().unwrap();
+            let current_board = board_ws.lock().unwrap();
             let b = &*current_board;
-            let send_move = (b.player == 0 && ws_player1) || (b.player == 1 && ws_player2);
+            let gui_send_move = (b.player == 0 && p1.is_some()) || (b.player == 1 && p2.is_some());
             out.send(
                 serde_json::to_string_pretty(&serde_json::json!({
                     "board": serde_json::to_value(b).unwrap(),
-                    "send_move": send_move,
+                    "send_move": gui_send_move,
                 })).unwrap()).unwrap();
             ServerThread {
-                current_board: current_board_ws.clone(),
-                player1_channel: p1_ch_tx.clone(),
-                player2_channel: p2_ch_tx.clone(),
+                current_board: board_ws.clone(),
+                player1_channel: p1.clone(),
+                player2_channel: p2.clone(),
                 out: out,
             }
-        }).unwrap();
+        }).unwrap()
+    };
 
-        let broadcaster = http.broadcaster();
-        let current_board_log = current_board.clone();
-        let log_move :Box<FnMut(Move,&Board)>= Box::new(move |m,b| {
-            eprintln!("executed MOVE {:?} -- sending to ws", m);
-            let mut current_board = current_board_log.lock().unwrap();
-            *current_board = b.clone();
-            let send_move = (b.player == 0 && ws_player1) || (b.player == 1 && ws_player2);
-            broadcaster.send(
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "board": serde_json::to_value(b).unwrap(),
-                    "send_move": send_move,
-                })).unwrap()).unwrap();
-        });
+    let broadcaster = http.broadcaster();
+    let board_log = board.clone();
+    let log_move :Box<FnMut(Move,&Board)>= Box::new(move |m,b| {
+        eprintln!("executed MOVE {:?} -- sending to ws", m);
+        let mut board = board_log.lock().unwrap();
+        *board = b.clone();
+        let gui_send_move = (b.player == 0 && p1.is_some()) || (b.player == 1 && p2.is_some());
+        broadcaster.send(
+            serde_json::to_string_pretty(&serde_json::json!({
+                "board": serde_json::to_value(b).unwrap(),
+                "send_move": gui_send_move,
+            })).unwrap()).unwrap();
+    });
 
-
-        thread::spawn(move || {
-            eprintln!("Info: Starting web server.");
-            http.listen(addr).unwrap();
-        });
-
-
-        let mut p1 = WSPlayer {   rx: p1_ch_rx.unwrap() };
-        let mut p2 = WSPlayer {   rx: p2_ch_rx.unwrap() };
-
+    thread::spawn(move || {
+        eprintln!("Info: Starting web server.");
+        http.listen(addr).unwrap();
+    });
 
     let addr = format!("http://{}/","localhost:9033");
 
@@ -303,9 +282,21 @@ fn main() {
         webbrowser::open(&addr).unwrap();
     });
 
+    log_move
+}
 
 
-    match play(&mut p1, &mut p2, log_move) {
+fn main() {
+    use std::env;
+    eprintln!("Quoridor");
+
+    let current_board : Arc<Mutex<Board>> = Arc::new(Mutex::new(Default::default()));
+    let mut opts = match get_opts(current_board.clone()) {
+        Ok(o) => o,
+        Err(e) => { eprintln!("Error: {}", e); return; },
+    };
+
+    match play_dyn(&mut *opts.p1, &mut *opts.p2, &mut *opts.log_move) {
         Ok(0) => eprintln!("Blue player won!"),
         Ok(1) => eprintln!("Red player won!"),
         Err(0) => eprintln!("Blue player won by move error!"),
@@ -326,7 +317,6 @@ impl Player for CLIPlayer {
     fn reset(&mut self) {}
 }
 
-use std::sync::mpsc;
 pub struct WSPlayer {
     rx :mpsc::Receiver<Move>,
 }
