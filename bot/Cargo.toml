@@ -9,3 +9,4 @@ model = { path = "../model" }
 arrayvec = "*"
 log = "0.4"
 env_logger = "0.6"
+ordered-float = "*"

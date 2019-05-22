@@ -18,21 +18,32 @@ impl Player for HeuristicBot {
     fn reset (&mut self) {}
 
     fn mv(&mut self, mv :Option<Move>) -> Move {
-        info!("HeuristicPlayer Received move {:?}", mv);
         if let Some(mv) = mv { self.board.integrate(mv).unwrap(); }
-        let (mut score, mut mv) = (-std::f32::INFINITY, None);
+        let i_am_player = self.board.player;
+        info!("HeuristicPlayer Received move {:?} as player {}", mv, i_am_player);
+        let mut  moves :Vec<(Move,f32)>= Vec::new();
+        //let (mut score, mut mv) = (-std::f32::INFINITY, None);
         for_each_move(&self.board, &mut |m| {
             let mut new_board = self.board.clone();
             new_board.integrate(m).unwrap();
-            debug!("Evaluating heuristic for {:?}", new_board);
-            let new_score = (1.0-2.0*(new_board.player as f32))*board_heuristic(&new_board); // board heuristic always
-            debug!("  Score: {}", new_score);
-            if new_score >= score {
-                score = new_score;
-                mv = Some(m);
-            }
+            //debug!("Evaluating heuristic for {:?}", new_board);
+            let new_score = (1.0-2.0*(i_am_player as f32))*board_heuristic(&new_board); // board heuristic always
+            //debug!("  Score: {}", new_score);
+            //if new_score >= score {
+            //    score = new_score;
+            //    mv = Some(m);
+            //}
+
+            moves.push((m,new_score));
+
             true
         });
+
+        moves.sort_by_key(|&(a,b)| ordered_float::OrderedFloat(-b));
+        for (mv,sc) in moves.iter().take(5) {
+            debug!("move {:?} score {}", mv, sc);
+        }
+        let mv = moves.get(0).map(|x| x.0);
 
         self.board.integrate(mv.unwrap()).unwrap();
         mv.unwrap()
@@ -98,7 +109,7 @@ pub fn for_each_pawn_move(board :&Board,  f :&mut FnMut(Move)->bool) -> bool {
 
                     for sign in vec![-1,1] {
                         let diag = Position { x: other_pos.x + sign*(other_pos.y - current_pos.y),
-                                               y: other_pos.x + sign*(other_pos.x - current_pos.x)};
+                                               y: other_pos.y + sign*(other_pos.x - current_pos.x)};
                         if in_bounds1to9(&diag) && !board.wall_between(&diag, &other_pos) {
                             let cont = f(Move::PawnTo(diag));
                             if !cont { return false; }
@@ -170,7 +181,7 @@ pub fn board_heuristic(board :&Board) -> f32 {
     //
     
     if let Some(winner) = board.get_winner() {
-        let sign = winner * 2 - 1;
+        let sign = -( (winner as f32) * 2.0 - 1.0);
         return (sign as f32) *std::f32::INFINITY;
     }
 
@@ -210,7 +221,7 @@ pub fn player_flow(board :&Board, player :usize) -> u64 {
     let mut queue : VecDeque<isize> = Default::default();
 
     queue.push_back(pos);
-    edges[pos as usize] = (10, ArrayVec::new());
+    edges[pos as usize] = (100, ArrayVec::new());
 
     while let Some(p) = queue.pop_front() {
         for_each_adjacent_cell(board, decode9(p as usize), |q| {
@@ -298,6 +309,7 @@ pub fn player_flow(board :&Board, player :usize) -> u64 {
             n = parent[n as usize];
         }
     }
+    debug!("   - {}", flow);
 
     flow
 }
