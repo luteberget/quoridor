@@ -139,6 +139,79 @@ pub fn for_each_wall_move(board :&Board, f : &mut FnMut(Move)->bool) -> bool{
     return true; // continue outer loop
 }
 
+pub fn effective_resistance(board :&Board, player :usize) -> f32 {
+
+    let goal_y = if player == 0 { 9 } else { 1 };
+
+    // Define a set of linear equations with one
+    // variable for each cell on the grid. 
+    // (unconnected cells should be fine with least squares method)
+    //
+    // Goal row is a single node with net current -1
+    // Player cell is a node with net current 1
+    // The rest of the cells have net current 0 and connections to 
+    // adjacent cells when there is no wall between.
+    // Goal row has potential 0.
+    // Check the player cell node's potential for the effective resistance 
+    // of the board.
+    //
+
+    // number of variables: all cells except for the goal row, 
+    // which is one supernode
+    let n_cols = 9*8 +1; 
+
+    // number of equations: one per node, plus setting goal row potential to zero.
+    let n_rows = (9*8+1) + 1;
+
+    let mut rhs = vec![0.0;n_cols];
+    rhs[0] = -1.0;
+
+    let Position { player_x, player_y } = board.positions[player];
+    // Assumption: player is not in their goal row.
+    rhs[1 + encode9(player_x,player_y)] = 1.0;
+
+    let encode_lsqr = |cell :Position| if cell.y == goal_y { 0 } else { encode9(cell.x,cell.y) };
+
+    let aprod = |mode : lsqr::Product| {
+        match mode {
+            lsqr::Product::YAddAx { x , y } => {
+                // y += A*x   [m*1] = [m*n]*[n*1]
+
+                // Each link between cells adds a resistor
+                // between their nodes,
+                //
+                for (idx_a,idx_b) in non_walled_neighbors(board) {
+                    // in the matrix' row a, we now add one to col a, and subtract one from col b.
+                    y[idx_a] += x[idx_a] - x[idx_b];
+                }
+
+                // Also, goal row has potential zero.
+                // This is the bottom row of the matrix, containing only the first variable
+                // (the goal row supernode)
+                y[n_rows-1] += x[0];
+
+            },
+            lsqr::Product::XAddATy { x, y } => {
+                // x += A^T*y  [n*1] = [n*m][m*1]
+
+                for (idx_a,idx_b) in non_walled_neighbors(board) {
+                    x[idx_a] += y[idx_a];
+                    x[idx_b] -= y[idx_a];
+                }
+
+                // the goal row has potential zero
+                x[0] += y[n_rows-1]; // ???? 
+            },
+        }
+    };
+
+    let (sol,statistics)  = lsqr::lsqr(|msg| print!("{}", msg),
+        n_rows, n_cols, params, aprod, &mut rhs);
+
+    // return the potential (=resistance) at the player cell node.
+    return sol[1 + encode9(player_x,player_y)];
+}
+
 /// measure the board's worth directly
 pub fn board_heuristic(board :&Board) -> f32 {
     // assumptions:
