@@ -78,13 +78,13 @@ impl Player for MinimaxPlayer {
     }
 }
 
-pub fn for_each_move(board :&Board, f :&mut FnMut(Move) -> bool) {
+pub fn for_each_move(board :&Board, f :&mut dyn FnMut(Move) -> bool) {
     if !for_each_pawn_move(board, f) { return; }
     if !for_each_wall_move(board, f) { return; }
 }
 
 /// available pawn moves
-pub fn for_each_pawn_move(board :&Board,  f :&mut FnMut(Move)->bool) -> bool {
+pub fn for_each_pawn_move(board :&Board,  f :&mut dyn FnMut(Move)->bool) -> bool {
     let current_pos = board.positions[board.player];
     let other_pos   = board.positions[1 - board.player];
 
@@ -124,7 +124,7 @@ pub fn for_each_pawn_move(board :&Board,  f :&mut FnMut(Move)->bool) -> bool {
 }
 
 /// Available wall moves
-pub fn for_each_wall_move(board :&Board, f : &mut FnMut(Move)->bool) -> bool{
+pub fn for_each_wall_move(board :&Board, f : &mut dyn FnMut(Move)->bool) -> bool{
     for orientation in vec![Orientation::Horizontal, Orientation::Vertical] {
         for x in 0..=8 {
             for y in 0..=8 {
@@ -139,7 +139,76 @@ pub fn for_each_wall_move(board :&Board, f : &mut FnMut(Move)->bool) -> bool{
     return true; // continue outer loop
 }
 
-pub fn effective_resistance(board :&Board, player :usize) -> f32 {
+pub fn for_each_nonwalled_neighbor(board :&Board, cell :Position, mut f :impl FnMut(Position)) {
+    let candidates = 
+        vec! [ 
+        Position { x: cell.x + 1, y: cell.y },
+        Position { x: cell.x - 1, y: cell.y },
+        Position { x: cell.x , y: cell.y + 1},
+        Position { x: cell.x , y: cell.y - 1},
+        ];
+
+    for candidate in candidates {
+        if in_bounds1to9(&candidate) && !board.wall_between(&cell, &candidate) {
+            f(candidate);
+        }
+    }
+}
+
+#[test]
+fn test_effective_resistance() {
+    println!("effective resistance test.");
+
+    let player = 1;
+    let mut board :Board = Default::default();
+    board.positions[player].y = 9;
+    board.positions[player].x = 5;
+
+    board.walls.push((Orientation::Horizontal, Position { x: 1, y: 1 }));
+    board.walls.push((Orientation::Horizontal, Position { x: 2, y: 1 }));
+    board.walls.push((Orientation::Horizontal, Position { x: 3, y: 1 }));
+    board.walls.push((Orientation::Horizontal, Position { x: 4, y: 1 }));
+    board.walls.push((Orientation::Horizontal, Position { x: 5, y: 1 }));
+    board.walls.push((Orientation::Horizontal, Position { x: 6, y: 1 }));
+
+    let x = effective_resistances(&board, player);
+
+    print_board_resistance(x.as_slice(), player);
+
+    println!(" in total {}", effective_resistance(&board, player));
+}
+
+pub fn print_board_resistance(values :&[f64], player :usize) {
+    let goal_y = if player == 0 { 9 } else { 1 };
+    let encode_lsqr = |cell :Position| 
+        if cell.y == goal_y { 0 } 
+        else if cell.y > goal_y { 1+ encode9(cell.x,cell.y-1) }
+        else { 1+ encode9(cell.x,cell.y) };
+
+    let mut tbl = prettytable::Table::new();
+    for y in (1..=9).rev() {
+        let mut row = prettytable::Row::empty();
+        for x in (1..=9) {
+            let resistance = values[encode_lsqr(Position {x, y })];
+            row.add_cell(prettytable::Cell::new(&format!("{:.2}",resistance)));
+        }
+        tbl.add_row(row);
+    }
+    tbl.printstd();
+}
+
+pub fn effective_resistance(board :&Board, player :usize) -> f64 {
+    let goal_y = if player == 0 { 9 } else { 1 };
+    let encode_lsqr = |cell :Position| 
+        if cell.y == goal_y { 0 } 
+        else if cell.y > goal_y { 1+ encode9(cell.x,cell.y-1) }
+        else { 1+ encode9(cell.x,cell.y) };
+
+    let resistances = effective_resistances(board, player);
+    resistances[encode_lsqr(board.positions[player])]
+}
+
+pub fn effective_resistances(board :&Board, player :usize) -> Vec<f64> {
 
     let goal_y = if player == 0 { 9 } else { 1 };
 
@@ -155,22 +224,23 @@ pub fn effective_resistance(board :&Board, player :usize) -> f32 {
     // Check the player cell node's potential for the effective resistance 
     // of the board.
     //
+    // Assumption: player is not in their goal row.
 
-    // number of variables: all cells except for the goal row, 
-    // which is one supernode
+
+    // number of variables: all cells except for the goal row, which is one supernode
     let n_cols = 9*8 +1; 
 
     // number of equations: one per node, plus setting goal row potential to zero.
     let n_rows = (9*8+1) + 1;
 
-    let mut rhs = vec![0.0;n_cols];
+    let encode_lsqr = |cell :Position| 
+        if cell.y == goal_y { 0 } 
+        else if cell.y > goal_y { 1+ encode9(cell.x,cell.y-1) }
+        else { 1+ encode9(cell.x,cell.y) };
+
+    let mut rhs = vec![0.0;n_rows];
     rhs[0] = -1.0;
-
-    let Position { player_x, player_y } = board.positions[player];
-    // Assumption: player is not in their goal row.
-    rhs[1 + encode9(player_x,player_y)] = 1.0;
-
-    let encode_lsqr = |cell :Position| if cell.y == goal_y { 0 } else { encode9(cell.x,cell.y) };
+    rhs[encode_lsqr(board.positions[player])] = 1.0;
 
     let aprod = |mode : lsqr::Product| {
         match mode {
@@ -180,9 +250,16 @@ pub fn effective_resistance(board :&Board, player :usize) -> f32 {
                 // Each link between cells adds a resistor
                 // between their nodes,
                 //
-                for (idx_a,idx_b) in non_walled_neighbors(board) {
-                    // in the matrix' row a, we now add one to col a, and subtract one from col b.
-                    y[idx_a] += x[idx_a] - x[idx_b];
+                for row in (1..=9).filter(|r| *r != goal_y) {
+                    for col in 1..=9 {
+                        let pos = Position { x: col, y: row };
+                        for_each_nonwalled_neighbor(board, pos, |other|  {
+                            //println!("pos {:?}", pos);
+                            let idx_a = encode_lsqr(pos);
+                            let idx_b = encode_lsqr(other);
+                            y[idx_a] += x[idx_a] - x[idx_b];
+                        });
+                    }
                 }
 
                 // Also, goal row has potential zero.
@@ -194,9 +271,16 @@ pub fn effective_resistance(board :&Board, player :usize) -> f32 {
             lsqr::Product::XAddATy { x, y } => {
                 // x += A^T*y  [n*1] = [n*m][m*1]
 
-                for (idx_a,idx_b) in non_walled_neighbors(board) {
-                    x[idx_a] += y[idx_a];
-                    x[idx_b] -= y[idx_a];
+                for row in (1..=9).filter(|r| *r != goal_y) {
+                    for col in 1..=9 {
+                        let pos = Position { x: col, y: row };
+                        for_each_nonwalled_neighbor(board, pos, |other| {
+                            let idx_a = encode_lsqr(pos);
+                            let idx_b = encode_lsqr(other);
+                            x[idx_a] += y[idx_a];
+                            x[idx_b] -= y[idx_a];
+                        });
+                    }
                 }
 
                 // the goal row has potential zero
@@ -205,11 +289,14 @@ pub fn effective_resistance(board :&Board, player :usize) -> f32 {
         }
     };
 
+    let params = lsqr::Params {
+        condlim: 0.0, damp: 0.0, iterlim: 10000, rel_mat_err: 0.0, rel_rhs_err: 0.0
+    };
+
     let (sol,statistics)  = lsqr::lsqr(|msg| print!("{}", msg),
         n_rows, n_cols, params, aprod, &mut rhs);
 
-    // return the potential (=resistance) at the player cell node.
-    return sol[1 + encode9(player_x,player_y)];
+    sol
 }
 
 /// measure the board's worth directly
