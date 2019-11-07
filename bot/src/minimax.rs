@@ -159,9 +159,9 @@ pub fn for_each_nonwalled_neighbor(board :&Board, cell :Position, mut f :impl Fn
 fn test_effective_resistance() {
     println!("effective resistance test.");
 
-    let player = 1;
+    let player = 0;
     let mut board :Board = Default::default();
-    board.positions[player].y = 9;
+    board.positions[player].y = 1;
     board.positions[player].x = 5;
 
     board.walls.push((Orientation::Horizontal, Position { x: 1, y: 1 }));
@@ -293,7 +293,7 @@ pub fn effective_resistances(board :&Board, player :usize) -> Vec<f64> {
         condlim: 0.0, damp: 0.0, iterlim: 10000, rel_mat_err: 0.0, rel_rhs_err: 0.0
     };
 
-    let (sol,statistics)  = lsqr::lsqr(|msg| print!("{}", msg),
+    let (sol,statistics)  = lsqr::lsqr(|msg| println!("{}", msg),
         n_rows, n_cols, params, aprod, &mut rhs);
 
     sol
@@ -345,14 +345,18 @@ pub fn board_heuristic(board :&Board) -> f32 {
         return (sign as f32) *std::f32::INFINITY;
     }
 
-    let wall_weight = 1;
+    let wall_weight = 0.05;
 
     //
     // (f_a - f_b) + p*(w_a - w_b)
     //
-    ((player_flow(board,0) as i64 - player_flow(board,1) as i64) + 
-        wall_weight*(board.walls_left[0] as i64 - board.walls_left[1] as i64 ))
-        as f32
+
+    let r0 = effective_resistance(&board, 0);
+    let r1 = effective_resistance(&board, 1);
+
+    let f = (r1 - r0) as f32;
+
+    (f + wall_weight*(board.walls_left[0] as f32 - board.walls_left[1] as f32 )) as f32
 }
 
 pub fn for_each_adjacent_cell(board :&Board, pos :Position,mut f:impl FnMut(Position)) {
