@@ -90,6 +90,7 @@ impl Board {
             Move::WallAt(ori,pos) => {
                 if !self.can_add_wall(ori,pos) { return Err(()); }
                 self.walls.push((ori,pos));
+                self.walls_left[self.player] -= 1;
                 // TODO sort?
             }
         }
@@ -160,6 +161,7 @@ impl Board {
     }
 
     pub fn can_add_wall(&self, ori :Orientation, pos :Position) -> bool {
+        if !(self.walls_left[self.player] > 0) { return false; }
         // TODO improve efficiency by storing bit sets for checking conflicts
         if !in_bounds1to8(&pos) { return false; }
 
